@@ -39,8 +39,11 @@ def get_user_name_and_patch_user_data(card_number):
         patch_res = requests.patch(f'{API_HOST}employees/{card_number}/', json=patch_data)
         patch_res.raise_for_status()
 
-        # Преобразуем last_checkin в datetime объект
-        last_checkin_dt = datetime.fromisoformat(data['last_checkin'].replace('Z', '+00:00')).replace(tzinfo=None)
+        if data.get('last_checkin'):
+            # Преобразуем last_checkin в datetime объект
+            last_checkin_dt = datetime.fromisoformat(data['last_checkin'].replace('Z', '+00:00')).replace(tzinfo=None)
+        else:
+            last_checkin_dt = None
 
         return data['employee_name'], last_checkin_dt, current_time, new_status
 
@@ -71,7 +74,7 @@ try:
                     print(f"Имя сотрудника: {user_name}")
                     print(f"Активность: {'Вход' if user_status else 'Выход'}")
                 else:
-                    print("Сотрудник не найден.")
+                    print(f"Сотрудник с номером карты {card_number} не найден.")
 
                 # Получаем текущую дату и время
                 now = datetime.now()
