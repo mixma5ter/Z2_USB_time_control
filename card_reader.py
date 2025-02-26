@@ -30,22 +30,29 @@ def get_user_name_and_patch_user_data(card_number):
         res = requests.get(f'{API_HOST}employees/{card_number}/')
         res.raise_for_status()
         data = res.json()
-        current_status = data['is_active']
-        new_status = not current_status
-
-        current_time = datetime.now().isoformat()
-
-        patch_data = {'is_active': new_status, 'last_checkin': current_time}
-        patch_res = requests.patch(f'{API_HOST}employees/{card_number}/', json=patch_data)
-        patch_res.raise_for_status()
+        current_user_status = data['is_active']
+        comment = None
+        now = datetime.now()
 
         if data.get('last_checkin'):
             # Преобразуем last_checkin в datetime объект
             last_checkin_dt = datetime.fromisoformat(data['last_checkin'].replace('Z', '+00:00')).replace(tzinfo=None)
         else:
-            last_checkin_dt = None
+            last_checkin_dt = now
 
-        return data['employee_name'], last_checkin_dt, current_time, new_status
+        if now.date() != last_checkin_dt.date() and current_user_status:
+            comment = "Некорректное завершение рабочего дня"
+            new_user_status = True
+        else:
+            new_user_status = not current_user_status
+
+        current_time = datetime.now().isoformat()
+
+        patch_data = {'is_active': new_user_status, 'last_checkin': current_time}
+        patch_res = requests.patch(f'{API_HOST}employees/{card_number}/', json=patch_data)
+        patch_res.raise_for_status()
+
+        return data['employee_name'], last_checkin_dt, current_time, new_user_status, comment
 
     except requests.exceptions.RequestException as e:
         print(f"Ошибка при запросе к API: {e}")
@@ -68,11 +75,13 @@ try:
             card_number = card_data[1].split(',')[1]  # Извлекаем номер карты
 
             try:
-                user_name, last_checkin_time, current_time_iso, user_status = get_user_name_and_patch_user_data(
-                    card_number)
+                user_name, last_checkin_time, current_time_iso, user_status, comment = get_user_name_and_patch_user_data(card_number)
                 if user_name:
+                    print(datetime.now())
                     print(f"Имя сотрудника: {user_name}")
                     print(f"Активность: {'Вход' if user_status else 'Выход'}")
+                    if comment:
+                        print(f'Комментарий: {comment}')
                 else:
                     print(f"Сотрудник с номером карты {card_number} не найден.")
 
@@ -92,6 +101,9 @@ try:
                     except (TypeError, ValueError) as e:
                         print(f"Ошибка при вычислении time_diff: {e}")
                         time_diff_formatted = "-"
+
+                if comment:
+                    time_diff_formatted = comment
 
                 fields = {
                     'NAME': card_number,
