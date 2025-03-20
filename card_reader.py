@@ -1,5 +1,6 @@
 import logging
 import sys
+import time
 from datetime import datetime
 
 import requests
@@ -65,82 +66,91 @@ def get_and_patch_user_data(card_number):
 
 
 if __name__ == '__main__':
-    try:
-        ser = serial.Serial(port, baudrate, bytesize=bytesize, parity=parity, stopbits=stopbits)
-        if ser.is_open:
-            logging.info(f"Connected to {port}")
-        else:
-            logging.warning("Card reader not connected")
-            ser.close()
-            sys.exit()
+    ser = None
+    while True:
+        try:
+            if ser is None or not ser.is_open:
+                ser = serial.Serial(port, baudrate, bytesize=bytesize, parity=parity, stopbits=stopbits)
+                if ser.is_open:
+                    logging.info(f"Connected to {port}")
+                else:
+                    logging.warning("Failed to connect to card reader. Retrying in 5 seconds...")
+                    time.sleep(5)
+                    continue
 
-        while True:
-            logging.info("\n")
-            logging.info("Waiting for data...")
+            logging.info("\nWaiting for data...")
             line = ser.readline().decode('ascii', errors='ignore').strip()
             logging.debug(f"Received line: {line}")
 
             if "Em-Marine" in line:
-                card_data = line.split()
-                card_number = card_data[1].split(',')[1]  # Извлекаем номер карты
-                logging.info(f"Card number read: {card_number}")
-
                 try:
-                    user_name, last_checkin_time, current_time_iso, user_status, comment = get_and_patch_user_data(card_number)
-                    if user_name:
-                        logging.info(f"User: {user_name}")
-                        logging.info(f"Activity: {'Вход' if user_status else 'Выход'}")
-                        if comment:
-                            logging.info(f"Comment: {comment}")
-                    else:
-                        logging.warning(f"User with card number {card_number} not found")
+                    card_number = line.split()[1].split(',')[1]
+                    logging.info(f"Card number read: {card_number}")
 
-                    # Получаем текущую дату и время
-                    now = datetime.now()
+                    user_name, last_checkin_time, current_time_iso, user_status, comment = get_and_patch_user_data(card_number)
+
+                    if user_name is None:
+                        logging.warning(f"User with card number {card_number} not found")
+                        continue
+
+                    logging.info(f"User: {user_name}")
+                    activity = 'Вход' if user_status else 'Выход'
+                    logging.info(f"Activity: {activity}")
+                    if comment:
+                        logging.info(f"Comment: {comment}")
+
                     time_diff_formatted = "-"
 
                     if not user_status:  # Если user_status == False (т.е. "Выход")
                         try:
-                            time_diff = now - last_checkin_time
+                            time_diff = datetime.now() - last_checkin_time
                             time_diff_seconds = time_diff.total_seconds()
                             hours = int(time_diff_seconds // 3600)
                             minutes = int((time_diff_seconds % 3600) // 60)
                             seconds = int(time_diff_seconds % 60)
                             time_diff_formatted = f"{hours:02}:{minutes:02}:{seconds:02}"
+                            logging.debug(f"Time difference: {time_diff_formatted}")
 
                         except (TypeError, ValueError) as e:
                             logging.error(f"Error: {e}")
                             time_diff_formatted = "-"
 
-                    if comment:
-                        time_diff_formatted = comment
-
                     fields = {
-                        'NAME': card_number,
-                        'PROPERTY_3246': user_name,
-                        'PROPERTY_3248': current_time_iso,
-                        'PROPERTY_3348': 'Вход' if user_status else 'Выход',
-                        'PROPERTY_3352': time_diff_formatted,
+                        'NAME': card_number,                    # Название
+                        'PROPERTY_3246': user_name,             # ФИО
+                        'PROPERTY_3248': current_time_iso,      # Время регистрации ключа
+                        'PROPERTY_3348': activity,              # Активность
+                        'PROPERTY_3352': time_diff_formatted,   # Длительность
+                        'PROPERTY_3510': comment,               # Комментарий
                     }
 
                     response = create_element(2025, fields)
                     logging.debug(f"Data sent to Bitrix24: {response}")
 
-                except KeyError:
-                    logging.error(f"Card number {card_number} does not exist")
+                except (IndexError, KeyError, ValueError) as e:  # Объединяем обработку исключений
+                    logging.error(f"Error processing card data: {e}")
                 except requests.exceptions.RequestException as e:
-                    logging.exception(f"Error: {e}")
+                    logging.exception(f"Error communicating with Bitrix24: {e}")
 
             elif "No card" in line:
-                print("...")
+                print("\n...")
             else:
                 logging.warning("The card is not supported")
 
-    except serial.SerialException as e:
-        logging.error(f"Serial port error: {e}")
-    except Exception as e:
-        logging.exception(f"Error: {e}")
-
-    finally:
-        if 'ser' in locals() and ser.is_open:
-            ser.close()
+        except serial.SerialException as e:
+            logging.error(f"Serial port error: {e}")
+            if ser:
+                ser.close()
+            ser = None
+            time.sleep(5)
+        except KeyboardInterrupt:
+            logging.info("Exiting...")
+            if ser:
+                ser.close()
+            sys.exit()
+        except Exception as e:
+            logging.exception(f"An unexpected error occurred: {e}")
+            if ser:
+                ser.close()
+            ser = None
+            time.sleep(5)
