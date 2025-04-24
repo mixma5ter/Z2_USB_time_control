@@ -1,4 +1,5 @@
 import logging
+import re
 import sys
 import time
 from datetime import datetime
@@ -29,12 +30,43 @@ stopbits = serial.STOPBITS_ONE
 
 
 def read_card_data_non_blocking(ser):
-    """Читает данные с последовательного порта неблокирующим способом."""
+    """Читает данные с последовательного порта неблокирующим способом
+       и проверяет на начало и конец сообщения."""
     data = ser.in_waiting
     if data > 0:
-      line = ser.read(data).decode('ascii', errors='ignore').strip()
-      return line
+        line = ser.read(data).decode('ascii', errors='ignore').strip()
+
+        # Проверка на "Em-Marine" и номер карты в конце
+        if "Em-Marine" in line and re.search(r"\d+$", line):
+            return line
+        else:
+            # Добавляем таймаут для обработки фрагментированных сообщений
+            start_time = time.time()
+            buffer = line
+            while time.time() - start_time < 0.1:  # Таймаут 0.1 секунды
+                more_data = ser.in_waiting
+                if more_data > 0:
+                    buffer += ser.read(more_data).decode('ascii', errors='ignore').strip()
+                    if "Em-Marine" in buffer and re.search(r"\d+$", buffer):
+                        return buffer
+                time.sleep(0.01)  # Небольшая задержка, чтобы не перегружать процессор
+            logging.warning(f"Incomplete or invalid card data: {buffer}")  # Логируем неполные данные
+
     return None
+
+
+def read_card_data_until_complete(ser):
+    buffer = ""
+    while True:
+        received_data = ser.readline().decode('utf-8', errors='ignore').strip()
+        if received_data:
+            buffer += received_data
+            if "Em-Marine" in buffer and re.search(r"\d+$", buffer):  # Проверка на номер карты в конце
+                break  # Сообщение полное
+        # Здесь можно добавить таймаут, аналогично предыдущему примеру,
+        # чтобы избежать бесконечного цикла, если конец сообщения не приходит
+
+    return buffer
 
 
 def get_and_patch_user_data(card_number):
@@ -102,7 +134,8 @@ if __name__ == '__main__':
                         card_number = line.split()[1].split(',')[1]
                         logging.info(f"Card number read: {card_number}")
 
-                        user_name, last_checkin_time, current_time_iso, user_status, comment = get_and_patch_user_data(card_number)
+                        user_name, last_checkin_time, current_time_iso, user_status, comment = get_and_patch_user_data(
+                            card_number)
 
                         if user_name is None:
                             logging.warning(f"User with card number {card_number} not found")
@@ -131,12 +164,12 @@ if __name__ == '__main__':
                                 time_diff_formatted = "-"
 
                         fields = {
-                            'NAME': card_number,                    # Название
-                            'PROPERTY_3246': user_name,             # ФИО
-                            'PROPERTY_3248': current_time_iso,      # Время регистрации ключа
-                            'PROPERTY_3348': activity,              # Активность
-                            'PROPERTY_3352': time_diff_formatted,   # Длительность
-                            'PROPERTY_3510': comment,               # Комментарий
+                            'NAME': card_number,  # Название
+                            'PROPERTY_3246': user_name,  # ФИО
+                            'PROPERTY_3248': current_time_iso,  # Время регистрации ключа
+                            'PROPERTY_3348': activity,  # Активность
+                            'PROPERTY_3352': time_diff_formatted,  # Длительность
+                            'PROPERTY_3510': comment,  # Комментарий
                         }
 
                         response = create_element(2025, fields, timeout=TIMEOUT)
