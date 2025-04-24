@@ -55,20 +55,6 @@ def read_card_data_non_blocking(ser):
     return None
 
 
-def read_card_data_until_complete(ser):
-    buffer = ""
-    while True:
-        received_data = ser.readline().decode('utf-8', errors='ignore').strip()
-        if received_data:
-            buffer += received_data
-            if "Em-Marine" in buffer and re.search(r"\d+$", buffer):  # Проверка на номер карты в конце
-                break  # Сообщение полное
-        # Здесь можно добавить таймаут, аналогично предыдущему примеру,
-        # чтобы избежать бесконечного цикла, если конец сообщения не приходит
-
-    return buffer
-
-
 def get_and_patch_user_data(card_number):
     logging.debug(f"Processing card number: {card_number}")
 
